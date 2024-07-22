@@ -3,8 +3,9 @@
   become: true
 
   vars:
+    user: "ubuntu"
     domain_name: "your_domain_or_IP"
-    project_dir: "/home/ubuntu/dj_project"
+    project_dir: "/home/{{ user }}/dj_project"
     gunicorn_sock: "{{ project_dir }}/gunicorn.sock"
     flask_app_file: "{{ project_dir }}/app.py"
     gunicorn_service_file: "/etc/systemd/system/gunicorn.service"
@@ -33,15 +34,15 @@
     file:
       path: "{{ project_dir }}"
       state: directory
-      owner: ubuntu
-      group: ubuntu
+      owner: "{{ user }}"
+      group: "{{ user }}"
       mode: '0755'
 
   - name: Set up Python virtual environment
     command: python3 -m venv env
     args:
       chdir: "{{ project_dir }}"
-    become_user: ubuntu
+    become_user: "{{ user }}"
 
   - name: Install Flask and Gunicorn
     pip:
@@ -49,7 +50,7 @@
         - Flask
         - gunicorn
       virtualenv: "{{ project_dir }}/env"
-    become_user: ubuntu
+    become_user: "{{ user }}"
 
   - name: Create Flask application
     copy:
@@ -97,7 +98,7 @@
         After=network.target
 
         [Service]
-        User=ubuntu
+        User={{ user }}
         Group=www-data
         WorkingDirectory={{ project_dir }}
         ExecStart={{ project_dir }}/env/bin/gunicorn --workers 3 --bind unix:{{ gunicorn_sock }} -m 007 app:app
@@ -150,10 +151,4 @@
     command: certbot --nginx -d {{ domain_name }}
     args:
       creates: /etc/letsencrypt/live/{{ domain_name }}/fullchain.pem
-
-  - name: Ensure firewall is enabled and configured
-    ufw:
-      rule: allow
-      port: '80,443'
-      proto: tcp
 
