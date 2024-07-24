@@ -1,0 +1,65 @@
+---
+- name: Remove Nginx, Gunicorn, and Flask setup on Ubuntu
+  hosts: vpn_server
+  become: true
+
+  vars:
+    user: "ubuntu"
+    project_name: "project_name"
+    project_dir: "/home/{{ user }}/{{ project_name }}"
+    domain_name: "your_domain_or_IP"
+    gunicorn_service_file: "/etc/systemd/system/gunicorn.service"
+    nginx_conf_file: "/etc/nginx/sites-available/{{ project_name }}"
+    nginx_enabled_file: "/etc/nginx/sites-enabled/{{ project_name }}"
+    packages:
+      - nginx
+      - python3-venv
+      - python3-pip
+      - certbot
+      - python3-certbot-nginx
+    files_to_remove:
+      - "{{ gunicorn_service_file }}"
+      - "{{ nginx_conf_file }}"
+      - "{{ nginx_enabled_file }}"
+      - "{{ project_dir }}"
+
+  tasks:
+    - name: Stop and disable Gunicorn service
+      systemd:
+        name: gunicorn
+        state: stopped
+        enabled: no
+
+    - name: Remove files and directories
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ files_to_remove }}"
+
+    - name: Restart Nginx to apply changes
+      systemd:
+        name: nginx
+        state: restarted
+
+    - name: Uninstall packages installed by apt
+      apt:
+        name: "{{ item }}"
+        state: absent
+        purge: yes
+      loop: "{{ packages }}"
+
+    - name: Remove Let's Encrypt SSL certificate
+      command: certbot delete --cert-name {{ domain_name }}
+      ignore_errors: yes
+
+    - name: Autoremove unnecessary packages
+      apt:
+        name: "*"
+        state: latest
+        autoremove: yes
+        purge: yes
+
+    - name: Clean up apt cache
+      apt:
+        update_cache: yes
+        autoclean: yes

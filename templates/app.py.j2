@@ -1,0 +1,32 @@
+from flask import Flask, request, jsonify
+import librosa
+import numpy as np
+
+app = Flask(__name__)
+
+@app.route('/')
+def index():
+    return "<h1>Hello, World!</h1>"
+
+def analyze_track(track_path):
+    y, sr = librosa.load(track_path)
+    tempo, beats = librosa.beat.beat_track(y=y, sr=sr)
+    onset_env = librosa.onset.onset_strength(y=y, sr=sr)
+    times = librosa.times_like(onset_env, sr=sr)
+    onset_frames = librosa.onset.onset_detect(onset_envelope=onset_env, sr=sr)
+    onset_times = librosa.frames_to_time(onset_frames, sr=sr)
+    return {
+        "tempo": tempo,
+        "beats": beats.tolist(),
+        "onset_times": onset_times.tolist()
+    }
+
+@app.route('/analyze', methods=['POST'])
+def analyze():
+    data = request.json
+    track_path = data['track_path']
+    result = analyze_track(track_path)
+    return jsonify(result)
+
+if __name__ == '__main__':
+    app.run(debug=True)

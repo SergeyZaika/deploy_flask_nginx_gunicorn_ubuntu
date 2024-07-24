@@ -1,0 +1,14 @@
+[Unit]
+Description=gunicorn daemon
+After=network.target
+
+[Service]
+User={{ user }}
+Group=www-data
+WorkingDirectory={{ project_dir }}
+ExecStart={{ project_dir }}/env/bin/gunicorn --workers 3 --bind unix:{{ gunicorn_sock }} -m 007 app:app
+StandardOutput=file:/var/log/gunicorn/gunicorn.log
+StandardError=file:/var/log/gunicorn/gunicorn.error.log
+
+[Install]
+WantedBy=multi-user.target

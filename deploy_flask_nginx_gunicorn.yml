@@ -1,16 +1,18 @@
 ---
 - name: Setup Nginx, Gunicorn, and Flask on Ubuntu
+  hosts: vpn_server
   become: true
 
   vars:
     user: "ubuntu"
-    domain_name: "your_domain_or_IP"
-    project_dir: "/home/{{ user }}/dj_project"
+    project_name: "project_name"
+    project_dir: "/home/{{ user }}/{{ project_name }}"
+    domain_name: "v8.insidenet.net"
     gunicorn_sock: "{{ project_dir }}/gunicorn.sock"
     flask_app_file: "{{ project_dir }}/app.py"
     gunicorn_service_file: "/etc/systemd/system/gunicorn.service"
-    nginx_conf_file: "/etc/nginx/sites-available/dj_project"
-    nginx_enabled_file: "/etc/nginx/sites-enabled/dj_project"
+    nginx_conf_file: "/etc/nginx/sites-available/{{ project_name }}"
+    nginx_enabled_file: "/etc/nginx/sites-enabled/{{ project_name }}"
 
   tasks:
 
@@ -19,9 +21,9 @@
       update_cache: yes
       upgrade: dist
 
-  - name: Install required packages
+  - name: Install required apt packages
     apt:
-      name: 
+      name:
         - nginx
         - python3
         - python3-venv
@@ -44,67 +46,39 @@
       chdir: "{{ project_dir }}"
     become_user: "{{ user }}"
 
-  - name: Install Flask and Gunicorn
+  - name: Install required pip packages
     pip:
       name:
         - Flask
         - gunicorn
+        - librosa
       virtualenv: "{{ project_dir }}/env"
     become_user: "{{ user }}"
 
   - name: Create Flask application
-    copy:
+    template:
+      src: "templates/app.py.j2"
       dest: "{{ flask_app_file }}"
-      content: |
-        from flask import Flask, request, jsonify
-        import librosa
-        import numpy as np
+      owner: "{{ user }}"
+      group: "{{ user }}"
 
-        app = Flask(__name__)
+  - name: Create logging directory for Gunicorn
+    file:
+      path: /var/log/gunicorn
+      state: directory
+      owner: "{{ user }}"
+      group: www-data
+      mode: '0755'
 
-        @app.route('/')
-        def index():
-            return "<h1>Hello, World!</h1>"
+  - name: Create Gunicorn service template in project directory
+    template:
+      src: "templates/gunicorn.service.j2"
+      dest: "{{ project_dir }}/gunicorn.service"
+      owner: "{{ user }}"
+      group: "{{ user }}"
 
-        def analyze_track(track_path):
-            y, sr = librosa.load(track_path)
-            tempo, beats = librosa.beat.beat_track(y=y, sr=sr)
-            onset_env = librosa.onset.onset_strength(y=y, sr=sr)
-            times = librosa.times_like(onset_env, sr=sr)
-            onset_frames = librosa.onset.onset_detect(onset_envelope=onset_env, sr=sr)
-            onset_times = librosa.frames_to_time(onset_frames, sr=sr)
-            return {
-                "tempo": tempo,
-                "beats": beats.tolist(),
-                "onset_times": onset_times.tolist()
-            }
-
-        @app.route('/analyze', methods=['POST'])
-        def analyze():
-            data = request.json
-            track_path = data['track_path']
-            result = analyze_track(track_path)
-            return jsonify(result)
-
-        if __name__ == '__main__':
-            app.run(debug=True)
-
-  - name: Create Gunicorn systemd service file
-    copy:
-      dest: "{{ gunicorn_service_file }}"
-      content: |
-        [Unit]
-        Description=gunicorn daemon
-        After=network.target
-
-        [Service]
-        User={{ user }}
-        Group=www-data
-        WorkingDirectory={{ project_dir }}
-        ExecStart={{ project_dir }}/env/bin/gunicorn --workers 3 --bind unix:{{ gunicorn_sock }} -m 007 app:app
-
-        [Install]
-        WantedBy=multi-user.target
+  - name: Move Gunicorn service file to /etc/systemd/system
+    command: mv {{ project_dir }}/gunicorn.service /etc/systemd/system/gunicorn.service
 
   - name: Reload systemd
     systemd:
@@ -116,28 +90,42 @@
       state: started
       enabled: yes
 
-  - name: Create Nginx configuration file
-    copy:
-      dest: "{{ nginx_conf_file }}"
-      content: |
-        server {
-            listen 80;
-            server_name {{ domain_name }};
+  - name: Wait for Gunicorn socket file to be created
+    wait_for:
+      path: "{{ gunicorn_sock }}"
+      state: present
+      timeout: 30
 
-            location / {
-                proxy_pass http://unix:{{ gunicorn_sock }};
-                proxy_set_header Host $host;
-                proxy_set_header X-Real-IP $remote_addr;
-                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-                proxy_set_header X-Forwarded-Proto $scheme;
-            }
-        }
+  - name: Adjust permissions of Gunicorn socket file
+    file:
+      path: "{{ gunicorn_sock }}"
+      owner: "{{ user }}"
+      group: www-data
+      mode: '0660'
+
+  - name: Create Nginx configuration template in project directory
+    template:
+      src: "templates/nginx.conf.j2"
+      dest: "{{ project_dir }}/nginx.conf"
+      owner: "{{ user }}"
+      group: "{{ user }}"
+
+  - name: Copy Nginx configuration file to /etc/nginx/sites-available
+    command: cp {{ project_dir }}/nginx.conf /etc/nginx/sites-available/{{ project_name }}
 
   - name: Enable Nginx configuration
     file:
-      src: "{{ nginx_conf_file }}"
+      src: "/etc/nginx/sites-available/{{ project_name }}"
       dest: "{{ nginx_enabled_file }}"
       state: link
+
+  - name: Remove conflicting Nginx configurations
+    file:
+      path: "{{ item }}"
+      state: absent
+    loop:
+      - "/etc/nginx/sites-enabled/default"
+      - "/etc/nginx/sites-enabled/old_config"
 
   - name: Test Nginx configuration
     command: nginx -t
@@ -147,8 +135,23 @@
       name: nginx
       state: restarted
 
+  - name: Ensure PATH is set in ~/.bashrc
+    lineinfile:
+      path: /home/{{ user }}/.bashrc
+      line: 'export PATH=$PATH:/home/{{ user }}/.local/bin'
+      state: present
+
+  - name: Check server status with curl
+    command: curl -s http://127.0.0.1
+    register: curl_output
+
+  - debug:
+      msg: "{{ curl_output.stdout }}"
+
   - name: Obtain Let's Encrypt SSL certificate
     command: certbot --nginx -d {{ domain_name }}
-    args:
-      creates: /etc/letsencrypt/live/{{ domain_name }}/fullchain.pem
+    register: certbot_output
+    ignore_errors: yes
 
+  - debug:
+      msg: "{{ certbot_output.stdout }}"
