@@ -7,7 +7,7 @@
     user: "ubuntu"
     project_name: "project_name"
     project_dir: "/home/{{ user }}/{{ project_name }}"
-    domain_name: "v8.insidenet.net"
+    domain_name: "domain_name"
     gunicorn_sock: "{{ project_dir }}/gunicorn.sock"
     flask_app_file: "{{ project_dir }}/app.py"
     gunicorn_service_file: "/etc/systemd/system/gunicorn.service"
