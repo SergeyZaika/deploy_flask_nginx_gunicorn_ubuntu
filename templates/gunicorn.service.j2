@@ -1,0 +1,13 @@
+[Unit]
+Description=Gunicorn instance to serve {{ project_name }}
+After=network.target
+
+[Service]
+User={{ user }}
+Group=www-data
+WorkingDirectory={{ project_dir }}
+Environment="PATH={{ project_dir }}/env/bin"
+ExecStart={{ project_dir }}/env/bin/gunicorn --workers 3 --bind unix:{{ project_dir }}/gunicorn.sock -m 007 wsgi:app
+
+[Install]
+WantedBy=multi-user.target

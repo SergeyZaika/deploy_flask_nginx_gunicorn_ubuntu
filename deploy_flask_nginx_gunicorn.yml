@@ -1,0 +1,195 @@
+---
+- name: Setup Nginx, Gunicorn, and Flask on Ubuntu
+  hosts: vpn_server
+  become: true
+
+  vars:
+    user: "user"
+    project_name: "project_name"
+    project_dir: "/home/{{ user }}/{{ project_name }}"
+    domain_name: "domain_name"
+    gunicorn_sock: "{{ project_dir }}/gunicorn.sock"
+    flask_app_file: "{{ project_dir }}/app.py"
+    wsgi_file: "{{ project_dir }}/wsgi.py"
+    gunicorn_service_file: "/etc/systemd/system/gunicorn.service"
+    nginx_conf_file: "/etc/nginx/sites-available/{{ project_name }}"
+    nginx_enabled_file: "/etc/nginx/sites-enabled/{{ project_name }}"
+    email: "email@email.com"
+
+  tasks:
+
+  - name: Update and upgrade apt packages
+    apt:
+      update_cache: yes
+      upgrade: dist
+
+  - name: Install required apt packages
+    apt:
+      name:
+        - nginx
+        - python3
+        - python3-venv
+        - python3-pip
+        - certbot
+        - python3-certbot-nginx
+      state: present
+
+  - name: Create project directory
+    file:
+      path: "{{ project_dir }}"
+      state: directory
+      owner: "{{ user }}"
+      group: "{{ user }}"
+      mode: '0755'
+
+  - name: Set up Python virtual environment
+    command: python3 -m venv env
+    args:
+      chdir: "{{ project_dir }}"
+    become_user: "{{ user }}"
+
+  - name: Install required pip packages
+    pip:
+      name:
+        - Flask
+        - gunicorn
+        - librosa
+      virtualenv: "{{ project_dir }}/env"
+    become_user: "{{ user }}"
+
+  - name: Create Flask application
+    template:
+      src: "templates/app.py.j2"
+      dest: "{{ flask_app_file }}"
+      owner: "{{ user }}"
+      group: "{{ user }}"
+
+  - name: Create WSGI file
+    template:
+      src: "templates/wsgi.py.j2"
+      dest: "{{ wsgi_file }}"
+      owner: "{{ user }}"
+      group: "{{ user }}"
+
+  - name: Create logging directory for Gunicorn
+    file:
+      path: /var/log/gunicorn
+      state: directory
+      owner: "{{ user }}"
+      group: www-data
+      mode: '0755'
+
+  - name: Create Gunicorn service template in project directory
+    template:
+      src: "templates/gunicorn.service.j2"
+      dest: "{{ project_dir }}/gunicorn.service"
+      owner: "{{ user }}"
+      group: "{{ user }}"
+
+  - name: Move Gunicorn service file to /etc/systemd/system
+    command: mv {{ project_dir }}/gunicorn.service /etc/systemd/system/gunicorn.service
+
+  - name: Reload systemd
+    systemd:
+      daemon_reload: yes
+
+  - name: Start and enable Gunicorn service
+    systemd:
+      name: gunicorn
+      state: started
+      enabled: yes
+
+  - name: Wait for Gunicorn socket file to be created
+    wait_for:
+      path: "{{ gunicorn_sock }}"
+      state: present
+      timeout: 30
+
+  - name: Adjust permissions of Gunicorn socket file
+    file:
+      path: "{{ gunicorn_sock }}"
+      owner: "{{ user }}"
+      group: www-data
+      mode: '0660'
+
+  - name: Create temporary Nginx configuration template in project directory (HTTP only)
+    template:
+      src: "templates/nginx_temp.conf.j2"
+      dest: "{{ nginx_conf_file }}"
+      owner: "{{ user }}"
+      group: "{{ user }}"
+
+  - name: Enable Nginx configuration
+    file:
+      src: "{{ nginx_conf_file }}"
+      dest: "{{ nginx_enabled_file }}"
+      state: link
+
+  - name: Remove conflicting Nginx configurations
+    file:
+      path: "{{ item }}"
+      state: absent
+    loop:
+      - "/etc/nginx/sites-enabled/default"
+      - "/etc/nginx/sites-enabled/old_config"
+
+  - name: Check for options-ssl-nginx.conf file
+    stat:
+      path: /etc/letsencrypt/options-ssl-nginx.conf
+    register: letsencrypt_ssl_options
+
+  - name: Create options-ssl-nginx.conf if it doesn't exist
+    template:
+      src: "templates/options-ssl-nginx.conf.j2"
+      dest: /etc/letsencrypt/options-ssl-nginx.conf
+    when: not letsencrypt_ssl_options.stat.exists
+
+  - name: Test Nginx configuration
+    command: nginx -t
+
+  - name: Restart Nginx
+    systemd:
+      name: nginx
+      state: restarted
+
+  - name: Ensure PATH is set in ~/.bashrc
+    lineinfile:
+      path: /home/{{ user }}/.bashrc
+      line: 'export PATH=$PATH:/home/{{ user }}/.local/bin'
+      state: present
+
+  - name: Obtain Let's Encrypt SSL certificate
+    command: certbot --nginx -d {{ domain_name }} --agree-tos --no-eff-email --email {{ email }} --non-interactive -v
+    register: certbot_output
+    ignore_errors: yes
+
+  - debug:
+      msg: "{{ certbot_output.stdout }}"
+
+  - name: Update Nginx configuration template in project directory (with SSL)
+    template:
+      src: "templates/nginx.conf.j2"
+      dest: "{{ nginx_conf_file }}"
+      owner: "{{ user }}"
+      group: "{{ user }}"
+
+  - name: Test updated Nginx configuration
+    command: nginx -t
+
+  - name: Restart Nginx with updated configuration
+    systemd:
+      name: nginx
+      state: restarted
+
+  - name: Check server status with curl
+    command: curl -s http://127.0.0.1
+    register: curl_output
+
+  - debug:
+      msg: "{{ curl_output.stdout }}"
+
+  handlers:
+    - name: restart nginx
+      systemd:
+        name: nginx
+        state: restarted
