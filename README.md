@@ -10,6 +10,11 @@ This repository contains two Ansible playbooks:
 - A remote Ubuntu server with SSH access.
 - Ports 22, 80, and 443 open on the remote server.
 
+## Prerequisites
+
+- Ensure that your remote server has the necessary permissions for the setup and teardown processes.
+- Ensure that your local machine can communicate with the remote server via SSH.
+
 ## Usage
 
 ### Setup Playbook
@@ -57,3 +62,19 @@ This repository contains two Ansible playbooks:
 - `templates/gunicorn.service.j2`: Jinja2 template for the Gunicorn service.
 - `templates/nginx.conf.j2`: Jinja2 template for the Nginx configuration.
 - `hosts`: Ansible inventory file to define your servers.
+
+## Playbooks Description
+
+### setup_nginx_gunicorn_flask.yml
+
+This playbook automates the following tasks:
+- Updates and upgrades the apt packages on the remote server.
+- Installs necessary packages including Nginx, Python3, and Certbot.
+- Creates a project directory and sets up a Python virtual environment.
+- Installs required Python packages for Flask and Gunicorn.
+- Configures Gunicorn as a systemd service.
+- Configures Nginx to serve the Flask application and optionally secures it with Let's Encrypt SSL certificates.
+
+### remove_nginx_gunicorn_flask.yml
+
+This playbook removes the setup created by the `setup_nginx_gunicorn_flask.yml` playbook. It stops and disables the Gunicorn service, removes related files and directories, and reverts Nginx configuration changes.
