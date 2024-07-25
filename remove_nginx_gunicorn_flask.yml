@@ -5,9 +5,9 @@
 
   vars:
     user: "ubuntu"
-    project_name: "project_name"
+    project_name: "dj-project"
     project_dir: "/home/{{ user }}/{{ project_name }}"
-    domain_name: "your_domain_or_IP"
+    domain_name: "dj.insidenet.net"
     gunicorn_service_file: "/etc/systemd/system/gunicorn.service"
     nginx_conf_file: "/etc/nginx/sites-available/{{ project_name }}"
     nginx_enabled_file: "/etc/nginx/sites-enabled/{{ project_name }}"
@@ -29,6 +29,8 @@
         name: gunicorn
         state: stopped
         enabled: no
+      failed_when: false
+      ignore_errors: true
 
     - name: Remove files and directories
       file:
@@ -36,10 +38,32 @@
         state: absent
       loop: "{{ files_to_remove }}"
 
-    - name: Restart Nginx to apply changes
+    - name: Check if Nginx is installed
+      stat:
+        path: /usr/sbin/nginx
+      register: nginx_installed
+
+    - name: Unmask Nginx service if installed and masked
+      command: systemctl unmask nginx
+      when: nginx_installed.stat.exists
+
+    - name: Restart Nginx to apply changes if installed
       systemd:
         name: nginx
         state: restarted
+      when: nginx_installed.stat.exists
+      failed_when: false
+      ignore_errors: true
+
+    - name: Check if certbot is installed
+      stat:
+        path: /usr/bin/certbot
+      register: certbot_installed
+
+    - name: Remove Let's Encrypt SSL certificate
+      command: certbot delete --cert-name {{ domain_name }}
+      when: certbot_installed.stat.exists
+      ignore_errors: yes
 
     - name: Uninstall packages installed by apt
       apt:
@@ -47,10 +71,6 @@
         state: absent
         purge: yes
       loop: "{{ packages }}"
-
-    - name: Remove Let's Encrypt SSL certificate
-      command: certbot delete --cert-name {{ domain_name }}
-      ignore_errors: yes
 
     - name: Autoremove unnecessary packages
       apt:
