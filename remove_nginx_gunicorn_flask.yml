@@ -38,22 +38,32 @@
         state: absent
       loop: "{{ files_to_remove }}"
 
-    - name: Check if Nginx is installed
-      stat:
-        path: /usr/sbin/nginx
-      register: nginx_installed
-
-    - name: Unmask Nginx service if installed and masked
-      command: systemctl unmask nginx
-      when: nginx_installed.stat.exists
-
-    - name: Restart Nginx to apply changes if installed
+    - name: Stop Nginx service
       systemd:
         name: nginx
-        state: restarted
-      when: nginx_installed.stat.exists
+        state: stopped
+      ignore_errors: yes
       failed_when: false
-      ignore_errors: true
+
+    - name: Remove Nginx packages
+      apt:
+        name: "{{ item }}"
+        state: absent
+        purge: yes
+      loop:
+        - nginx
+        - nginx-core
+        - nginx-common
+      ignore_errors: yes
+
+    - name: Perform autoremove
+      apt:
+        autoremove: yes
+        purge: yes
+
+    - name: Clean up apt cache
+      apt:
+        autoclean: yes
 
     - name: Check if certbot is installed
       stat:
@@ -64,6 +74,7 @@
       command: certbot delete --cert-name {{ domain_name }}
       when: certbot_installed.stat.exists
       ignore_errors: yes
+      failed_when: false
 
     - name: Uninstall packages installed by apt
       apt:
@@ -71,15 +82,24 @@
         state: absent
         purge: yes
       loop: "{{ packages }}"
+      ignore_errors: yes
 
     - name: Autoremove unnecessary packages
       apt:
-        name: "*"
-        state: latest
         autoremove: yes
         purge: yes
 
     - name: Clean up apt cache
       apt:
-        update_cache: yes
         autoclean: yes
+
+    - name: Remove any remaining configuration files
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/nginx
+        - /var/log/nginx
+        - /var/log/gunicorn
+        - /etc/letsencrypt
+        - /home/ubuntu/dj-project
