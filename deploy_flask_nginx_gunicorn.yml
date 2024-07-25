@@ -4,15 +4,17 @@
   become: true
 
   vars:
-    user: "ubuntu"
+    user: "user"
     project_name: "project_name"
     project_dir: "/home/{{ user }}/{{ project_name }}"
-    domain_name: "v8.insidenet.net"
+    domain_name: "domain_name"
     gunicorn_sock: "{{ project_dir }}/gunicorn.sock"
     flask_app_file: "{{ project_dir }}/app.py"
+    wsgi_file: "{{ project_dir }}/wsgi.py"
     gunicorn_service_file: "/etc/systemd/system/gunicorn.service"
     nginx_conf_file: "/etc/nginx/sites-available/{{ project_name }}"
     nginx_enabled_file: "/etc/nginx/sites-enabled/{{ project_name }}"
+    email: "email@email.com"
 
   tasks:
 
@@ -62,6 +64,13 @@
       owner: "{{ user }}"
       group: "{{ user }}"
 
+  - name: Create WSGI file
+    template:
+      src: "templates/wsgi.py.j2"
+      dest: "{{ wsgi_file }}"
+      owner: "{{ user }}"
+      group: "{{ user }}"
+
   - name: Create logging directory for Gunicorn
     file:
       path: /var/log/gunicorn
@@ -103,19 +112,16 @@
       group: www-data
       mode: '0660'
 
-  - name: Create Nginx configuration template in project directory
+  - name: Create temporary Nginx configuration template in project directory (HTTP only)
     template:
-      src: "templates/nginx.conf.j2"
-      dest: "{{ project_dir }}/nginx.conf"
+      src: "templates/nginx_temp.conf.j2"
+      dest: "{{ nginx_conf_file }}"
       owner: "{{ user }}"
       group: "{{ user }}"
 
-  - name: Copy Nginx configuration file to /etc/nginx/sites-available
-    command: cp {{ project_dir }}/nginx.conf /etc/nginx/sites-available/{{ project_name }}
-
   - name: Enable Nginx configuration
     file:
-      src: "/etc/nginx/sites-available/{{ project_name }}"
+      src: "{{ nginx_conf_file }}"
       dest: "{{ nginx_enabled_file }}"
       state: link
 
@@ -126,6 +132,17 @@
     loop:
       - "/etc/nginx/sites-enabled/default"
       - "/etc/nginx/sites-enabled/old_config"
+
+  - name: Check for options-ssl-nginx.conf file
+    stat:
+      path: /etc/letsencrypt/options-ssl-nginx.conf
+    register: letsencrypt_ssl_options
+
+  - name: Create options-ssl-nginx.conf if it doesn't exist
+    template:
+      src: "templates/options-ssl-nginx.conf.j2"
+      dest: /etc/letsencrypt/options-ssl-nginx.conf
+    when: not letsencrypt_ssl_options.stat.exists
 
   - name: Test Nginx configuration
     command: nginx -t
@@ -141,6 +158,29 @@
       line: 'export PATH=$PATH:/home/{{ user }}/.local/bin'
       state: present
 
+  - name: Obtain Let's Encrypt SSL certificate
+    command: certbot --nginx -d {{ domain_name }} --agree-tos --no-eff-email --email {{ email }} --non-interactive -v
+    register: certbot_output
+    ignore_errors: yes
+
+  - debug:
+      msg: "{{ certbot_output.stdout }}"
+
+  - name: Update Nginx configuration template in project directory (with SSL)
+    template:
+      src: "templates/nginx.conf.j2"
+      dest: "{{ nginx_conf_file }}"
+      owner: "{{ user }}"
+      group: "{{ user }}"
+
+  - name: Test updated Nginx configuration
+    command: nginx -t
+
+  - name: Restart Nginx with updated configuration
+    systemd:
+      name: nginx
+      state: restarted
+
   - name: Check server status with curl
     command: curl -s http://127.0.0.1
     register: curl_output
@@ -148,10 +188,8 @@
   - debug:
       msg: "{{ curl_output.stdout }}"
 
-  - name: Obtain Let's Encrypt SSL certificate
-    command: certbot --nginx -d {{ domain_name }}
-    register: certbot_output
-    ignore_errors: yes
-
-  - debug:
-      msg: "{{ certbot_output.stdout }}"
+  handlers:
+    - name: restart nginx
+      systemd:
+        name: nginx
+        state: restarted
