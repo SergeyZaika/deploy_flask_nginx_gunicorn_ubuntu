@@ -1,0 +1,165 @@
+---
+- name: Setup Nginx, Gunicorn, and Flask on Ubuntu
+  hosts: all
+  become: true
+
+  vars:
+    user: "www-data"
+    project_name: "application"
+    project_dir: "/var/www/{{ project_name }}"
+    gunicorn_sock: "{{ project_dir }}/gunicorn.sock"
+    flask_app_file: "{{ project_dir }}/app.py"
+    wsgi_file: "{{ project_dir }}/wsgi.py"
+    gunicorn_service_file: "/etc/systemd/system/gunicorn.service"
+    nginx_conf_file: "/etc/nginx/sites-available/{{ project_name }}"
+    nginx_enabled_file: "/etc/nginx/sites-enabled/{{ project_name }}"
+    domain_name: "localhost"
+
+  tasks:
+
+  - name: Ensure /tmp directory has correct permissions
+    file:
+      path: /tmp
+      mode: '1777'
+    become: true
+
+  - name: Update and upgrade apt packages
+    apt:
+      update_cache: yes
+      upgrade: dist
+
+  - name: Install required apt packages
+    apt:
+      name:
+        - nginx
+        - python3
+        - python3-pip
+        - certbot
+        - python3-certbot-nginx
+      state: present
+
+  - name: Install boto3 for AWS S3 integration
+    pip:
+      name: boto3
+      state: present
+    become: true
+
+  - name: Install mysql-connector for MariaDB integration
+    pip:
+      name: mysql-connector-python
+      state: present
+    become: true
+
+  - name: Create project directory
+    file:
+      path: "{{ project_dir }}"
+      state: directory
+      owner: "{{ user }}"
+      group: "{{ user }}"
+      mode: '0755'
+
+  - name: Install required pip packages globally
+    pip:
+      name:
+        - Flask
+        - gunicorn
+        - librosa
+      state: present
+    become: true
+
+  - name: Create Flask application
+    template:
+      src: "templates/app.py.j2"
+      dest: "{{ flask_app_file }}"
+      owner: "{{ user }}"
+      group: "{{ user }}"
+
+  - name: Create WSGI file
+    template:
+      src: "templates/wsgi.py.j2"
+      dest: "{{ wsgi_file }}"
+      owner: "{{ user }}"
+      group: "{{ user }}"
+
+  - name: Create logging directory for Gunicorn
+    file:
+      path: /var/log/gunicorn
+      state: directory
+      owner: "{{ user }}"
+      group: www-data
+      mode: '0755'
+
+  - name: Create Gunicorn service template in project directory
+    template:
+      src: "templates/gunicorn.local.service.j2"
+      dest: "{{ project_dir }}/gunicorn.service"
+      owner: "{{ user }}"
+      group: "{{ user }}"
+
+  - name: Move Gunicorn service file to /etc/systemd/system
+    command: mv {{ project_dir }}/gunicorn.service /etc/systemd/system/gunicorn.service
+
+  - name: Reload systemd
+    systemd:
+      daemon_reload: yes
+
+  - name: Start and enable Gunicorn service
+    systemd:
+      name: gunicorn
+      state: started
+      enabled: yes
+
+  - name: Wait for Gunicorn socket file to be created
+    wait_for:
+      path: "{{ gunicorn_sock }}"
+      state: present
+      timeout: 30
+
+  - name: Adjust permissions of Gunicorn socket file
+    file:
+      path: "{{ gunicorn_sock }}"
+      owner: "{{ user }}"
+      group: www-data
+      mode: '0660'
+
+  - name: Create Nginx configuration template
+    template:
+      src: "templates/nginx_temp.conf.j2"
+      dest: "{{ nginx_conf_file }}"
+      owner: "{{ user }}"
+      group: "{{ user }}"
+
+  - name: Enable Nginx configuration
+    file:
+      src: "{{ nginx_conf_file }}"
+      dest: "{{ nginx_enabled_file }}"
+      state: link
+
+  - name: Remove conflicting Nginx configurations
+    file:
+      path: "{{ item }}"
+      state: absent
+    loop:
+      - "/etc/nginx/sites-enabled/default"
+      - "/etc/nginx/sites-enabled/old_config"
+
+  - name: Test Nginx configuration
+    command: nginx -t
+
+  - name: Restart Nginx
+    systemd:
+      name: nginx
+      state: restarted
+
+  - name: Check server status with curl
+    command: curl -s http://127.0.0.1
+    register: curl_output
+
+  - debug:
+      msg: "{{ curl_output.stdout }}"
+
+  handlers:
+    - name: restart nginx
+      systemd:
+        name: nginx
+        state: restarted
