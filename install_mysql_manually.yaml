@@ -1,3 +1,14 @@
+# 0. https://dev.mysql.com/doc/refman/8.4/en/linux-installation-apt-repo.html
+# 1. wget https://dev.mysql.com/get/mysql-apt-config_0.8.33-1_all.deb
+# 2. dpkg -i mysql-apt-config_0.8.33-1_all.deb
+# 3. sudo apt update
+# 4. sudo apt-get install mysql-server
+# enter root password and chouse 8.0 version
+# 5. sudo systemctl start mysql
+# 5. systemctl status mysql
+# 6. run playbook
+
+
 ---
 - name: Встановити та налаштувати MySQL з доступом для віддаленого користувача
   hosts: database
