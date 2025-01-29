@@ -1,0 +1,54 @@
+---
+- name: Clear host setup
+  hosts: flask-gunicorn
+  become: true
+
+  vars:
+    project_name: "application"
+    project_dir: "/var/www/{{ project_name }}"
+    gunicorn_service_file: "/etc/systemd/system/gunicorn.service"
+    nginx_conf_file: "/etc/nginx/sites-available/{{ project_name }}"
+    nginx_enabled_file: "/etc/nginx/sites-enabled/{{ project_name }}"
+    log_dir: "/var/log/gunicorn"
+
+  tasks:
+    - name: Stop Gunicorn service if it exists
+      systemd:
+        name: gunicorn
+        state: stopped
+        enabled: no
+      ignore_errors: true
+
+    - name: Delete Gunicorn service file
+      file:
+        path: "{{ gunicorn_service_file }}"
+        state: absent
+
+    - name: Delete project directory
+      file:
+        path: "{{ project_dir }}"
+        state: absent
+
+    - name: Delete Gunicorn log directory
+      file:
+        path: "{{ log_dir }}"
+        state: absent
+
+    - name: Remove Nginx configuration
+      file:
+        path: "{{ nginx_conf_file }}"
+        state: absent
+
+    - name: Remove Nginx enabled link
+      file:
+        path: "{{ nginx_enabled_file }}"
+        state: absent
+
+    - name: Reload systemd
+      systemd:
+        daemon_reload: yes
+
+    - name: Restart Nginx
+      systemd:
+        name: nginx
+        state: restarted

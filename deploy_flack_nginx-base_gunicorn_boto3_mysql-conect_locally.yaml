@@ -1,6 +1,6 @@
 ---
 - name: Setup Nginx, Gunicorn, and Flask on Ubuntu
-  hosts: all
+  hosts: flask-gunicorn
   become: true
 
   vars:
@@ -14,14 +14,12 @@
     nginx_conf_file: "/etc/nginx/sites-available/{{ project_name }}"
     nginx_enabled_file: "/etc/nginx/sites-enabled/{{ project_name }}"
     domain_name: "localhost"
+    mariadb_host: "10.77.66.106"
+    mariadb_user: "remote_user"
+    mariadb_password: "StrongRemotePassword!"
+    mariadb_db: "applicationdb"
 
   tasks:
-
-  - name: Ensure /tmp directory has correct permissions
-    file:
-      path: /tmp
-      mode: '1777'
-    become: true
 
   - name: Update and upgrade apt packages
     apt:
@@ -37,7 +35,12 @@
         - certbot
         - python3-certbot-nginx
       state: present
-
+  
+  - name: Install MariaDB client
+    apt:
+      name: mariadb-client
+      state: present
+      
   - name: Install boto3 for AWS S3 integration
     pip:
       name: boto3
@@ -63,7 +66,6 @@
       name:
         - Flask
         - gunicorn
-        - librosa
       state: present
     become: true
 
@@ -73,6 +75,7 @@
       dest: "{{ flask_app_file }}"
       owner: "{{ user }}"
       group: "{{ user }}"
+      mode: '0755'
 
   - name: Create WSGI file
     template:
@@ -80,6 +83,7 @@
       dest: "{{ wsgi_file }}"
       owner: "{{ user }}"
       group: "{{ user }}"
+      mode: '0755'
 
   - name: Create logging directory for Gunicorn
     file:

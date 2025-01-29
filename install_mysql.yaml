@@ -1,0 +1,74 @@
+---
+- name: Встановити та налаштувати MySQL з доступом для віддаленого користувача
+  hosts: database
+  become: yes
+  vars:
+    mysql_root_password: "Zaq12345678xxx!"  # Пароль для користувача root MySQL
+    mysql_bind_address: "10.77.66.106"      # IP-адреса для підключення до MySQL
+    mysql_database_name: "applicationdb"    # Назва бази даних
+    remote_user_name: "remote_user"         # Ім'я віддаленого користувача
+    remote_user_password: "StrongRemotePassword!"  # Пароль віддаленого користувача
+    mysql_version: "8.0.41"  # Вказуємо потрібну версію MySQL
+    mysql_apt_config_path: "/home/sergey/mysql-apt-config_0.8.33-1_all.deb"  # Шлях до завантаженого файлу
+
+  tasks:
+    # Переконатися, що MySQL запущений
+    - name: Переконатися, що MySQL запущений
+      service:
+        name: mysql
+        state: started
+        enabled: yes
+
+    # Налаштування bind-address MySQL
+    - name: Налаштувати bind-address MySQL
+      lineinfile:
+        path: /etc/mysql/mysql.conf.d/mysqld.cnf
+        regexp: '^bind-address'
+        line: "bind-address = {{ mysql_bind_address }}"
+      notify:
+        - Перезапустити MySQL
+
+    # Створити базу даних MySQL
+    - name: Створити базу даних MySQL
+      mysql_db:
+        name: "{{ mysql_database_name }}"
+        state: present
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+
+    # Створити віддаленого користувача MySQL
+    - name: Створити віддаленого користувача MySQL
+      mysql_user:
+        name: "{{ remote_user_name }}"
+        password: "{{ remote_user_password }}"
+        host: "%"
+        state: present
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+
+    # Надати всі привілеї віддаленому користувачу MySQL
+    - name: Надати всі привілеї віддаленому користувачу MySQL
+      mysql_user:
+        name: "{{ remote_user_name }}"
+        host: "%"
+        priv: "*.*:ALL"
+        state: present
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+
+    # Оновити привілеї MySQL
+    - name: Оновити привілеї MySQL
+      mysql_user:
+        name: "{{ remote_user_name }}"
+        host: "%"
+        priv: "*.*:ALL"
+        state: present
+        login_user: root
+        login_password: "{{ mysql_root_password }}"
+
+  handlers:
+    # Перезапустити MySQL
+    - name: Перезапустити MySQL
+      service:
+        name: mysql
+        state: restarted

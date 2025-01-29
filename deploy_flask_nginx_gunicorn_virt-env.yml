@@ -1,6 +1,6 @@
 ---
 - name: Setup Nginx, Gunicorn, and Flask on Ubuntu
-  hosts: vpn_server
+  hosts: all
   become: true
 
   vars:

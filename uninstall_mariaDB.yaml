@@ -1,0 +1,80 @@
+---
+- name: Повне видалення MariaDB із системи
+  hosts: database
+  become: yes
+  tasks:
+    - name: Зупинити MariaDB (якщо запущена)
+      service:
+        name: mariadb
+        state: stopped
+      ignore_errors: true
+
+    - name: Видалити пакети MariaDB
+      apt:
+        name: "{{ item }}"
+        state: absent
+      loop:
+        - mariadb-server
+        - mariadb-client
+        - mariadb-common
+        - mariadb-plugin
+        - mysql-common
+      ignore_errors: true
+
+    - name: Знайти залишкові пакети MariaDB
+      shell: |
+        dpkg -l | awk '/^rc/ { print $2 }'
+      register: residual_packages
+      changed_when: false
+
+    - name: Видалити залишкові пакети MariaDB, якщо є
+      shell: |
+        dpkg --purge {{ residual_packages.stdout | join(' ') }}
+      when: residual_packages.stdout != ""
+      args:
+        warn: false
+      ignore_errors: true
+
+    - name: Видалити залишкові файли MariaDB
+      shell: |
+        rm -rf /etc/mysql /var/lib/mysql /var/log/mysql /var/run/mysqld
+      args:
+        warn: false
+      ignore_errors: true
+
+    - name: Очистити кеш apt
+      apt:
+        update_cache: yes
+
+    - name: Видалити залежності, які більше не використовуються
+      apt:
+        autoremove: yes
+        purge: yes
+
+    - name: Виконати autoclean для очищення кешу
+      command: apt autoclean
+
+    - name: Перевірити, чи залишились пакети MariaDB
+      shell: |
+        dpkg -l | grep -i mariadb || echo "Залишків немає"
+      register: mariadb_packages
+      changed_when: false
+
+    - name: Вивести повідомлення про залишки, якщо є
+      debug:
+        msg: "Залишки пакетів MariaDB: {{ mariadb_packages.stdout_lines }}"
+      when: mariadb_packages.stdout | length > 0
+
+    - name: Перевірити, чи все очищено
+      debug:
+        msg: "MariaDB повністю видалена, залишків немає."
+      when: mariadb_packages.stdout | length == 0
+
+
+# sudo dpkg --purge mariadb-server
+# sudo rm -rf /etc/mysql /var/lib/mysql /var/log/mysql /var/run/mysqld
+# sudo apt-get purge mariadb-client mariadb-common mysql-common
+# sudo apt-get autoremove --purge
+# sudo apt autoremove --purge -y
+# sudo apt autoclean
+# dpkg -l | grep -i mariadb || echo "Залишків немає"

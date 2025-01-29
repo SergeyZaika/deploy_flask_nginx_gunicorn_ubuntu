@@ -1,0 +1,131 @@
+---
+- name: Встановлення та налаштування MariaDB з доступом для віддалених користувачів
+  hosts: database
+  become: yes
+  vars:
+    mariadb_version: "11.4"  
+    mariadb_root_password: "Zaq12345678xxx!"
+    mariadb_bind_address: "10.77.66.106"
+    mariadb_database_name: "applicationdb"
+    remote_user_name: "remote_user"
+    remote_user_password: "StrongRemotePassword!"
+    mariadb_collation: "utf8mb4_general_ci"
+    mariadb_charset: "utf8mb4"
+
+  tasks:
+    - name: Перевірити, чи існує GPG-ключ MariaDB, і видалити його, якщо є
+      file:
+        path: /usr/share/keyrings/mariadb-release-signing-key.asc
+        state: absent
+
+    - name: Завантаження офіційного GPG-ключа MariaDB
+      get_url:
+        url: https://mariadb.org/mariadb_release_signing_key.asc
+        dest: /usr/share/keyrings/mariadb-release-signing-key.asc
+
+    - name: Конвертація GPG-ключа у формат keyring
+      shell: |
+        gpg --batch --yes --dearmor -o /usr/share/keyrings/mariadb-keyring.gpg /usr/share/keyrings/mariadb-release-signing-key.asc
+      args:
+        executable: /bin/bash
+
+    - name: Додавання офіційного репозиторію MariaDB
+      apt_repository:
+        repo: "deb [signed-by=/usr/share/keyrings/mariadb-keyring.gpg arch=amd64,arm64,ppc64el] https://mirror.mariadb.org/repo/{{ mariadb_version }}/ubuntu jammy main"
+        state: present
+        filename: "mariadb"
+
+    - name: Оновлення списку пакетів
+      apt:
+        update_cache: yes
+
+    - name: Встановлення MariaDB
+      apt:
+        name:
+          - mariadb-server
+          - mariadb-client
+        state: present
+
+    - name: Запуск MariaDB та включення автозапуску
+      service:
+        name: mariadb
+        state: started
+        enabled: yes
+
+    - name: Зміна конфігурації bind-address
+      lineinfile:
+        path: /etc/mysql/mariadb.conf.d/50-server.cnf
+        regexp: '^bind-address'
+        line: "bind-address = {{ mariadb_bind_address }}"
+        state: present
+
+    - name: Перезапуск MariaDB після зміни конфігурації
+      service:
+        name: mariadb
+        state: restarted
+
+    - name: Перевірка, чи MariaDB працює
+      command: systemctl is-active mariadb
+      register: mariadb_status
+      failed_when: mariadb_status.stdout.strip() != "active"
+      changed_when: false
+
+    - name: Зміна аутентифікації root-користувача на mysql_native_password
+      shell: |
+        mysql -u root <<EOF
+        ALTER USER 'root'@'localhost' IDENTIFIED VIA mysql_native_password USING PASSWORD('{{ mariadb_root_password }}');
+        FLUSH PRIVILEGES;
+        EOF
+      args:
+        executable: /bin/bash
+
+    - name: Дозвіл root-користувачу доступу з будь-якого хоста
+      shell: |
+        mysql -u root -p{{ mariadb_root_password }} <<EOF
+        GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' IDENTIFIED BY '{{ mariadb_root_password }}' WITH GRANT OPTION;
+        FLUSH PRIVILEGES;
+        EOF
+      args:
+        executable: /bin/bash
+
+    - name: Створення користувача для віддаленого доступу
+      shell: |
+        mysql -u root -p{{ mariadb_root_password }} <<EOF
+        CREATE USER '{{ remote_user_name }}'@'%' IDENTIFIED BY '{{ remote_user_password }}';
+        GRANT ALL PRIVILEGES ON {{ mariadb_database_name }}.* TO '{{ remote_user_name }}'@'%';
+        FLUSH PRIVILEGES;
+        EOF
+      args:
+        executable: /bin/bash
+
+    - name: Виконання mysql_secure_installation
+      shell: |
+        mysql -u root -p{{ mariadb_root_password }} <<EOF
+        DELETE FROM mysql.user WHERE User='';
+        DROP DATABASE IF EXISTS test;
+        DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';
+        FLUSH PRIVILEGES;
+        EOF
+      args:
+        executable: /bin/bash
+
+    - name: Створення бази даних
+      mysql_db:
+        name: "{{ mariadb_database_name }}"
+        state: present
+        login_user: root
+        login_password: "{{ mariadb_root_password }}"
+        login_host: "{{ mariadb_bind_address }}"
+        collation: "{{ mariadb_collation }}"
+        encoding: "{{ mariadb_charset }}"
+
+    - name: Перевірка створення бази даних
+      shell: |
+        mysql -u root -p{{ mariadb_root_password }} -e "SHOW DATABASES;"
+      args:
+        executable: /bin/bash
+      register: databases
+
+    - name: Вивід списку баз даних
+      debug:
+        var: databases.stdout_lines
